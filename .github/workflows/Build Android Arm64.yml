@@ -1,0 +1,66 @@
+name: Build Android Arm64 (Small Size)
+
+on:
+  workflow_dispatch: # 手动触发
+
+jobs:
+  build-optimized:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 签出代码
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      # 2. 设置 JAVA 环境
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+          cache: "gradle"
+
+      # 3. 设置 Flutter (使用 master 兼容依赖)
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'master'
+          cache: true
+
+      # 4. 【核心黑科技】生成真实的临时签名文件
+      # 这样我们就能打 Release 包，而不会报错了！
+      - name: Generate Keystore & Config
+        run: |
+          cd simple_live_app/android
+          # 生成一个有效期限 10000 天的临时证书
+          keytool -genkey -v -keystore upload-keystore.jks \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias upload -dname "CN=Android, OU=Android, O=Android, L=Android, S=Android, C=US" \
+            -storepass 123456 -keypass 123456
+          
+          # 生成配置文件指向这个证书
+          echo "storePassword=123456" > key.properties
+          echo "keyPassword=123456" >> key.properties
+          echo "keyAlias=upload" >> key.properties
+          echo "storeFile=upload-keystore.jks" >> key.properties
+
+      # 5. 拉取依赖
+      - name: Get Dependencies
+        run: |
+          cd simple_live_app
+          flutter pub get
+
+      # 6. 打包 APK (Release + 只打 arm64)
+      # --release: 开启代码混淆和压缩 (体积大幅减小)
+      # --target-platform android-arm64: 只包含 arm v8 架构
+      - name: Build APK
+        run: |
+          cd simple_live_app
+          flutter build apk --release --target-platform android-arm64
+
+      # 7. 上传结果
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: simple-live-arm64-release
+          path: simple_live_app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 3
