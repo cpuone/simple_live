@@ -1,4 +1,4 @@
-name: Build Android App
+name: Build Android App (Debug)
 
 on:
   workflow_dispatch:
@@ -19,23 +19,22 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'master' # 关键修改：使用 master 分支以获取最新版本 (3.38+)
-      
+          channel: 'master' # 保持 master，因为之前验证了依赖需要这个
+
       - name: Get Dependencies
         working-directory: simple_live_app
         run: flutter pub get
 
-      - name: Build APK
+      - name: Build APK (Debug)
         working-directory: simple_live_app
         run: |
-          # 修正：去掉了错误的 --no-codesign 参数
-          flutter build apk --release
+          # 关键修改：改为 debug 模式，彻底绕过签名验证
+          flutter build apk --debug
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: simple-live-android-app
-          # 注意：如果下面这一步报错找不到文件，说明 release 必须要有签名
-          # 那时我们需要改成打 debug 包
-          path: simple_live_app/build/app/outputs/flutter-apk/app-release.apk
+          name: simple-live-android-debug
+          # 注意：输出路径也变了，是 app-debug.apk
+          path: simple_live_app/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 5
