@@ -1,0 +1,42 @@
+name: Build Android App
+
+on:
+  workflow_dispatch: # 允许手动点击按钮触发构建
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable' # 如果编译失败，可以尝试改为 'master'
+          flutter-version: '3.27.0' # 指定一个较新的稳定版本，或者直接留空使用最新版
+
+      - name: Get Dependencies
+        working-directory: simple_live_app # 这里指定进入手机版目录，如果要打TV版改为 simple_live_tv_app
+        run: flutter pub get
+
+      - name: Build APK
+        working-directory: simple_live_app
+        run: |
+          # 尝试构建 Release 包。
+          # 注意：由于没有配置签名文件，Flutter 可能会默认使用 debug 签名或者跳过签名。
+          # 生成的 APK 可以安装，但安装时可能会提示"Play 保护机制"警告，忽略即可。
+          flutter build apk --release --no-codesign
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: simple-live-android-app
+          path: simple_live_app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 5
