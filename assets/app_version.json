@@ -1,0 +1,7 @@
+{
+  "version": "1.11.1",
+  "version_num": 11101,
+  "version_desc": "## 更新内容\n\n- 修复已知问题\n- 性能优化\n- UI 改进\n\n## 下载说明\n\n请根据您的设备选择对应的安装包下载。",
+  "prerelease": false,
+  "download_url": "https://github.com/xiaoyaocz/dart_simple_live/releases"
+}

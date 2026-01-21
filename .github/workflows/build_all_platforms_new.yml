@@ -1,0 +1,431 @@
+name: Build All Platforms
+
+on:
+  # 手动触发
+  workflow_dispatch:
+    inputs:
+      build_android:
+        description: '构建 Android'
+        required: true
+        default: true
+        type: boolean
+      build_ios:
+        description: '构建 iOS'
+        required: true
+        default: true
+        type: boolean
+      build_macos:
+        description: '构建 macOS'
+        required: true
+        default: true
+        type: boolean
+      build_windows:
+        description: '构建 Windows'
+        required: true
+        default: true
+        type: boolean
+      build_linux:
+        description: '构建 Linux'
+        required: true
+        default: true
+        type: boolean
+      build_tv:
+        description: '构建 Android TV'
+        required: true
+        default: false
+        type: boolean
+      create_release:
+        description: '创建 GitHub Release'
+        required: true
+        default: false
+        type: boolean
+  # 推送 Tag 时自动触发
+  push:
+    tags:
+      - 'v*'
+
+env:
+  FLUTTER_VERSION: '3.38.x'
+  JAVA_VERSION: '17'
+
+jobs:
+  # ==================== Android & iOS & macOS ====================
+  build-mobile-macos:
+    name: Build Android + iOS + macOS
+    runs-on: macos-latest
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && (inputs.build_android || inputs.build_ios || inputs.build_macos))
+    permissions:
+      contents: write
+
+    steps:
+      # 1. 检出代码
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      # 2. 设置 Java 环境（Android 需要）
+      - name: ☕ Setup Java
+        if: inputs.build_android != false
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: 'gradle'
+
+      # 3. 配置 Android 签名（如果有密钥）
+      - name: 🔐 Setup Android Keystore
+        if: inputs.build_android != false && env.HAS_KEYSTORE == 'true'
+        env:
+          HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        id: android_keystore
+        uses: timheuer/base64-to-file@v1.2
+        with:
+          fileName: keystore.jks
+          encodedString: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: 📝 Create key.properties
+        if: inputs.build_android != false && env.HAS_KEYSTORE == 'true'
+        env:
+          HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "storeFile=${{ steps.android_keystore.outputs.filePath }}" > simple_live_app/android/key.properties
+          echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> simple_live_app/android/key.properties
+          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> simple_live_app/android/key.properties
+          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> simple_live_app/android/key.properties
+
+      # 如果没有签名密钥，创建 dummy 配置
+      - name: 📝 Create Dummy key.properties
+        if: inputs.build_android != false && env.HAS_KEYSTORE != 'true'
+        env:
+          HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        run: |
+          cd simple_live_app/android
+          echo "storePassword=123456" > key.properties
+          echo "keyPassword=123456" >> key.properties
+          echo "keyAlias=key0" >> key.properties
+          echo "storeFile=../app/dummy.jks" >> key.properties
+
+      # 4. 设置 Flutter 环境
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      # 5. 启用桌面支持
+      - name: 🖥️ Enable macOS Desktop
+        if: inputs.build_macos != false
+        run: flutter config --enable-macos-desktop
+
+      # 6. 安装依赖
+      - name: 📦 Install Dependencies
+        run: |
+          cd simple_live_app
+          flutter pub get
+
+      # 7. 安装打包工具
+      - name: 🛠️ Install Build Tools
+        if: inputs.build_macos != false
+        run: |
+          npm install -g appdmg
+          dart pub global activate flutter_distributor
+
+      # 8. 构建 Android APK
+      - name: 🤖 Build Android APK
+        if: inputs.build_android != false
+        run: |
+          cd simple_live_app
+          if [ "${{ env.HAS_KEYSTORE }}" == "true" ]; then
+            echo "Building release APK with signature..."
+            flutter build apk --release --split-per-abi
+          else
+            echo "Building debug APK without signature..."
+            flutter build apk --debug
+          fi
+        env:
+          HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+
+      # 9. 构建 iOS
+      - name: 🍎 Build iOS IPA
+        if: inputs.build_ios != false
+        run: |
+          cd simple_live_app
+          flutter build ios --release --no-codesign
+          mkdir -p build/ios/iphoneos/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ios/iphoneos/Payload/Runner.app
+          cd build/ios/iphoneos/
+          zip -q -r ios_no_sign.ipa Payload
+
+      # 10. 构建 macOS
+      - name: 💻 Build macOS DMG
+        if: inputs.build_macos != false
+        run: |
+          cd simple_live_app
+          flutter_distributor package --platform macos --targets dmg,zip --skip-clean
+
+      # 11. 上传 Android APK
+      - name: 📤 Upload Android APK
+        if: inputs.build_android != false
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: |
+            simple_live_app/build/app/outputs/flutter-apk/*.apk
+          retention-days: 7
+
+      # 12. 上传 iOS IPA
+      - name: 📤 Upload iOS IPA
+        if: inputs.build_ios != false
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: simple_live_app/build/ios/iphoneos/ios_no_sign.ipa
+          retention-days: 7
+
+      # 13. 上传 macOS
+      - name: 📤 Upload macOS
+        if: inputs.build_macos != false
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: |
+            simple_live_app/build/dist/*/*.dmg
+            simple_live_app/build/dist/*/*.zip
+          retention-days: 7
+
+  # ==================== Windows ====================
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.build_windows != false)
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: 🖥️ Enable Windows Desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: 📦 Install Dependencies
+        run: |
+          cd simple_live_app
+          flutter pub get
+
+      - name: 🛠️ Install flutter_distributor
+        run: dart pub global activate flutter_distributor
+
+      - name: 🪟 Build Windows
+        run: |
+          cd simple_live_app
+          flutter_distributor package --platform windows --targets msix,zip --skip-clean
+
+      - name: 📤 Upload Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msix
+          path: |
+            simple_live_app/build/dist/*/*.msix
+            simple_live_app/build/dist/*/*.zip
+          retention-days: 7
+
+  # ==================== Linux ====================
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-22.04
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.build_linux != false)
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: 📦 Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libasound2-dev libmpv-dev mpv
+
+      - name: 🖥️ Enable Linux Desktop
+        run: flutter config --enable-linux-desktop
+
+      - name: 📦 Install Flutter Dependencies
+        run: |
+          cd simple_live_app
+          flutter pub get
+
+      - name: 🛠️ Install flutter_distributor
+        run: dart pub global activate flutter_distributor
+
+      - name: 🐧 Build Linux
+        run: |
+          cd simple_live_app
+          flutter_distributor package --platform linux --targets deb,zip --skip-clean
+
+      - name: 📤 Upload Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          path: |
+            simple_live_app/build/dist/*/*.deb
+            simple_live_app/build/dist/*/*.zip
+          retention-days: 7
+
+  # ==================== Android TV ====================
+  build-android-tv:
+    name: Build Android TV
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.build_tv != false)
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: 'gradle'
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: 📝 Create Dummy key.properties
+        run: |
+          cd simple_live_tv_app/android
+          echo "storePassword=123456" > key.properties
+          echo "keyPassword=123456" >> key.properties
+          echo "keyAlias=key0" >> key.properties
+          echo "storeFile=../app/dummy.jks" >> key.properties
+
+      - name: 📦 Install Dependencies
+        run: |
+          cd simple_live_tv_app
+          flutter pub get
+
+      - name: 📺 Build Android TV APK
+        run: |
+          cd simple_live_tv_app
+          flutter build apk --debug
+
+      - name: 📤 Upload Android TV APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-tv-apk
+          path: simple_live_tv_app/build/app/outputs/flutter-apk/*.apk
+          retention-days: 7
+
+  # ==================== 创建 Release ====================
+  create-release:
+    name: Create GitHub Release
+    needs: [build-mobile-macos, build-windows, build-linux, build-android-tv]
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.create_release)
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: 📋 List Downloaded Files
+        run: |
+          echo "=== Downloaded Artifacts ==="
+          ls -R artifacts/
+
+      - name: 📄 Read Version Info
+        id: version
+        run: |
+          if [ -f "assets/app_version.json" ]; then
+            VERSION=$(cat assets/app_version.json | jq -r '.version')
+            DESC=$(cat assets/app_version.json | jq -r '.version_desc')
+            PRERELEASE=$(cat assets/app_version.json | jq -r '.prerelease')
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+            DESC="Simple Live Release ${VERSION}"
+            PRERELEASE="false"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "description=${DESC}" >> $GITHUB_OUTPUT
+          echo "prerelease=${PRERELEASE}" >> $GITHUB_OUTPUT
+
+      - name: 🚀 Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "Simple Live ${{ steps.version.outputs.version }}"
+          body: |
+            ## 📦 Simple Live ${{ steps.version.outputs.version }}
+
+            ${{ steps.version.outputs.description }}
+
+            ### 📥 下载说明
+
+            - **Android**: 下载 `app-arm64-v8a-release.apk` (推荐，适用于大多数设备)
+            - **Android TV**: 下载 `app-debug.apk` (TV 版本)
+            - **Windows**: 下载 `.msix` 或 `.zip` 文件
+            - **macOS**: 下载 `.dmg` 或 `.zip` 文件
+            - **Linux**: 下载 `.deb` 或 `.zip` 文件
+            - **iOS**: 下载 `ios_no_sign.ipa` (需要自行签名)
+
+            ### ⚠️ 注意事项
+
+            - 本项目仅供学习交流使用
+            - iOS 版本未签名，需要自行签名后安装
+            - 部分平台版本为测试版本，可能存在问题
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            artifacts/**/*.apk
+            artifacts/**/*.ipa
+            artifacts/**/*.dmg
+            artifacts/**/*.zip
+            artifacts/**/*.msix
+            artifacts/**/*.deb
+          fail_on_unmatched_files: false
+
+      - name: ✅ Release Created
+        run: |
+          echo "✅ GitHub Release 创建成功！"
+          echo "版本: ${{ steps.version.outputs.version }}"
