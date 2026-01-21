@@ -28,12 +28,14 @@ jobs:
       - name: Build APK
         working-directory: simple_live_app
         run: |
-          # 使用 release 构建，跳过签名
-          flutter build apk --release --no-codesign
+          # 修正：去掉了错误的 --no-codesign 参数
+          flutter build apk --release
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: simple-live-android-app
+          # 注意：如果下面这一步报错找不到文件，说明 release 必须要有签名
+          # 那时我们需要改成打 debug 包
           path: simple_live_app/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 5
