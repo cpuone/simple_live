@@ -1,4 +1,4 @@
-name: Build All Platforms (No Sign)
+name: Build All Platforms (Fix Version)
 
 on:
   workflow_dispatch: # 手动触发
@@ -11,7 +11,7 @@ jobs:
       contents: write
 
     steps:
-      # 1. 签出代码 (改为 master 分支，如果是 dev 分支请自行修改)
+      # 1. 签出代码
       - uses: actions/checkout@v4
         with:
           ref: master
@@ -23,12 +23,12 @@ jobs:
           java-version: "17"
           cache: "gradle"
 
-      # 3. 设置 Flutter (使用 3.38 解决依赖问题)
+      # 3. 设置 Flutter (关键修改点 👇)
       - name: Flutter action
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.38.x"
-          channel: 'master' 
+          channel: 'master'   # 指定使用 master 通道
+          # flutter-version: "3.38.x"  <-- 删掉了这一行，让它自动取 master 最新版
           cache: true
 
       # 4. 开启 Desktop 支持
@@ -41,36 +41,35 @@ jobs:
           cd simple_live_app
           flutter pub get
 
-      # 6. 安装工具 (Mac打包需用)
+      # 6. 安装工具
       - name: Install appdmg
         run: npm install -g appdmg
       - name: Install flutter_distributor
         run: dart pub global activate flutter_distributor
 
       # ---------------------------------------------------------
-      #  ANDROID 部分 (改为 Debug 模式，跳过签名)
+      #  ANDROID (Debug模式)
       # ---------------------------------------------------------
       - name: Build APK (Debug)
         run: |
           cd simple_live_app
           flutter build apk --debug
 
-      - name: Upload APK to Artifacts
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: android-debug
           path: simple_live_app/build/app/outputs/flutter-apk/app-debug.apk
 
       # ---------------------------------------------------------
-      #  iOS 部分 (免签名模式)
+      #  iOS (免签名)
       # ---------------------------------------------------------
       - name: Build IPA (No CodeSign)
         run: |
           cd simple_live_app
-          # iOS 必须用 release --no-codesign 才能生成无签名包
           flutter build ios --release --no-codesign
 
-      - name: Create Payload for IPA
+      - name: Create Payload
         run: |
           cd simple_live_app
           mkdir -p build/ios/iphoneos/Payload
@@ -85,7 +84,7 @@ jobs:
           path: simple_live_app/build/ios/iphoneos/ios_no_sign.ipa
 
       # ---------------------------------------------------------
-      #  MacOS 部分
+      #  MacOS
       # ---------------------------------------------------------
       - name: Build MacOS
         run: |
@@ -100,7 +99,7 @@ jobs:
             simple_live_app/build/dist/*/*.dmg
             simple_live_app/build/dist/*/*.zip
 
-  # 打包 Windows (独立任务)
+  # 打包 Windows
   build-windows:
     runs-on: windows-latest
     permissions:
@@ -111,8 +110,7 @@ jobs:
           ref: master
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.38.x"
-          channel: 'master'
+          channel: 'master' # 这里也改了
           cache: true
       - name: Enable Windows Desktop
         run: flutter config --enable-windows-desktop
@@ -126,4 +124,12 @@ jobs:
       - name: Build Windows
         run: |
           cd simple_live_app
-          flutter_distributor package --platform windows --targets msix,zip --
+          flutter_distributor package --platform windows --targets msix,zip --skip-clean
+      
+      - name: Upload Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-app
+          path: |
+            simple_live_app/build/dist/*/*.msix
+            simple_live_app/build/dist/*/*.zip
