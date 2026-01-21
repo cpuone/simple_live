@@ -1,7 +1,7 @@
 name: Build Android App
 
 on:
-  workflow_dispatch: # 允许手动点击按钮触发构建
+  workflow_dispatch:
 
 jobs:
   build:
@@ -19,19 +19,16 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable' # 如果编译失败，可以尝试改为 'master'
-          flutter-version: '3.27.0' # 指定一个较新的稳定版本，或者直接留空使用最新版
-
+          channel: 'master' # 关键修改：使用 master 分支以获取最新版本 (3.38+)
+      
       - name: Get Dependencies
-        working-directory: simple_live_app # 这里指定进入手机版目录，如果要打TV版改为 simple_live_tv_app
+        working-directory: simple_live_app
         run: flutter pub get
 
       - name: Build APK
         working-directory: simple_live_app
         run: |
-          # 尝试构建 Release 包。
-          # 注意：由于没有配置签名文件，Flutter 可能会默认使用 debug 签名或者跳过签名。
-          # 生成的 APK 可以安装，但安装时可能会提示"Play 保护机制"警告，忽略即可。
+          # 使用 release 构建，跳过签名
           flutter build apk --release --no-codesign
 
       - name: Upload Artifact
