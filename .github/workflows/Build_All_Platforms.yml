@@ -1,15 +1,11 @@
-name: Build All Platforms (Fix Version)
+name: Build Android Only
 
 on:
   workflow_dispatch: # 手动触发
 
 jobs:
-  # 打包 Android, iOS, Mac
-  build-mac-ios-android:
-    runs-on: macos-latest
-    permissions:
-      contents: write
-
+  build-android:
+    runs-on: ubuntu-latest # 安卓打包用 Linux 更快
     steps:
       # 1. 签出代码
       - uses: actions/checkout@v4
@@ -23,113 +19,38 @@ jobs:
           java-version: "17"
           cache: "gradle"
 
-      # 3. 设置 Flutter (关键修改点 👇)
-      - name: Flutter action
+      # 3. 设置 Flutter (必须用 master 通道以兼容最新代码)
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'master'   # 指定使用 master 通道
-          # flutter-version: "3.38.x"  <-- 删掉了这一行，让它自动取 master 最新版
+          channel: 'master'
           cache: true
 
-      # 4. 开启 Desktop 支持
-      - name: Enable Flutter Desktop
-        run: flutter config --enable-macos-desktop
+      # 4. 【核心修复】生成假的配置文件，防止 Gradle 报错崩溃
+      - name: Create Dummy key.properties
+        run: |
+          cd simple_live_app/android
+          echo "storePassword=123456" > key.properties
+          echo "keyPassword=123456" >> key.properties
+          echo "keyAlias=key0" >> key.properties
+          echo "storeFile=../app/dummy.jks" >> key.properties
 
       # 5. 拉取依赖
-      - name: Restore packages
+      - name: Get Dependencies
         run: |
           cd simple_live_app
           flutter pub get
 
-      # 6. 安装工具
-      - name: Install appdmg
-        run: npm install -g appdmg
-      - name: Install flutter_distributor
-        run: dart pub global activate flutter_distributor
-
-      # ---------------------------------------------------------
-      #  ANDROID (Debug模式)
-      # ---------------------------------------------------------
-      - name: Build APK (Debug)
+      # 6. 打包 APK (Debug 模式，免签名)
+      - name: Build APK
         run: |
           cd simple_live_app
           flutter build apk --debug
 
+      # 7. 上传结果
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: android-debug
+          name: simple-live-android
           path: simple_live_app/build/app/outputs/flutter-apk/app-debug.apk
-
-      # ---------------------------------------------------------
-      #  iOS (免签名)
-      # ---------------------------------------------------------
-      - name: Build IPA (No CodeSign)
-        run: |
-          cd simple_live_app
-          flutter build ios --release --no-codesign
-
-      - name: Create Payload
-        run: |
-          cd simple_live_app
-          mkdir -p build/ios/iphoneos/Payload
-          cp -R build/ios/iphoneos/Runner.app build/ios/iphoneos/Payload/Runner.app
-          cd build/ios/iphoneos/
-          zip -q -r ios_no_sign.ipa Payload
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-unsigned
-          path: simple_live_app/build/ios/iphoneos/ios_no_sign.ipa
-
-      # ---------------------------------------------------------
-      #  MacOS
-      # ---------------------------------------------------------
-      - name: Build MacOS
-        run: |
-          cd simple_live_app
-          flutter_distributor package --platform macos --targets dmg,zip --skip-clean
-
-      - name: Upload MacOS
-        uses: actions/upload-artifact@v4
-        with:
-          name: mac-app
-          path: |
-            simple_live_app/build/dist/*/*.dmg
-            simple_live_app/build/dist/*/*.zip
-
-  # 打包 Windows
-  build-windows:
-    runs-on: windows-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: master
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: 'master' # 这里也改了
-          cache: true
-      - name: Enable Windows Desktop
-        run: flutter config --enable-windows-desktop
-      - name: Restore Packages
-        run: |
-          cd simple_live_app
-          flutter pub get
-      - name: Install flutter_distributor
-        run: dart pub global activate flutter_distributor
-      
-      - name: Build Windows
-        run: |
-          cd simple_live_app
-          flutter_distributor package --platform windows --targets msix,zip --skip-clean
-      
-      - name: Upload Windows
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-app
-          path: |
-            simple_live_app/build/dist/*/*.msix
-            simple_live_app/build/dist/*/*.zip
+          retention-days: 3
